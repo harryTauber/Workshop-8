@@ -1,4 +1,4 @@
-﻿// Original Cg/HLSL code stub copyright (c) 2010-2012 SharpDX - Alexandre Mutel
+// Original Cg/HLSL code stub copyright (c) 2010-2012 SharpDX - Alexandre Mutel
 // 
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,7 +24,7 @@
 
 //UNITY_SHADER_NO_UPGRADE
 
-Shader "Unlit/GouraudShader"
+Shader "Unlit/PhongTextureShader"
 {
 	Properties
 	{
@@ -43,18 +43,21 @@ Shader "Unlit/GouraudShader"
 
 			uniform float3 _PointLightColor;
 			uniform float3 _PointLightPosition;
+            uniform sampler2D _MainTex;
 
 			struct vertIn
 			{
 				float4 vertex : POSITION;
 				float4 normal : NORMAL;
-				float4 color : COLOR;
+				float4 uv : TEXCOORD0;
 			};
 
 			struct vertOut
 			{
 				float4 vertex : SV_POSITION;
-				float4 color : COLOR;
+				float4 uv : TEXCOORD0;
+                float4 worldVertex: TEXCOORD1;
+                float3 worldNormal: TEXCOORD2;
 			};
 
 			// Implementation of the vertex shader
@@ -69,31 +72,14 @@ Shader "Unlit/GouraudShader"
 				float4 worldVertex = mul(unity_ObjectToWorld, v.vertex);
 				float3 worldNormal = normalize(mul(transpose((float3x3)unity_WorldToObject), v.normal.xyz));
 
-				// Calculate ambient RGB intensities
-				float Ka = 1;
-				float3 amb = v.color.rgb * UNITY_LIGHTMODEL_AMBIENT.rgb * Ka;
-
-				// Calculate diffuse RBG reflections, we save the results of L.N because we will use it again
-				// (when calculating the reflected ray in our specular component)
-				float fAtt = 1;
-				float Kd = 1;
-				float3 L = normalize(_PointLightPosition - worldVertex.xyz);
-				float LdotN = dot(L, worldNormal.xyz);
-				float3 dif = fAtt * _PointLightColor.rgb * Kd * v.color.rgb * saturate(LdotN);
-				
-				// Calculate specular reflections
-				float Ks = 1;
-				float specN = 5; // Values>>1 give tighter highlights
-				float3 V = normalize(_WorldSpaceCameraPos - worldVertex.xyz);
-				float3 R = 2*(LdotN)*worldNormal-L;
-				float3 spe = fAtt * _PointLightColor.rgb * Ks * pow(saturate(dot(V, R)), specN);
-
-				// Combine Phong illumination model components
-				o.color.rgb = amb.rgb + dif.rgb + spe.rgb;
-				o.color.a = v.color.a;
-
 				// Transform vertex in world coordinates to camera coordinates
 				o.vertex = mul(UNITY_MATRIX_MVP, v.vertex);
+                o.uv = v.uv;
+
+                // Pass out the world vertex position and world normal to be interpolated
+				// in the fragment shader (and utilised)
+				o.worldVertex = worldVertex;
+				o.worldNormal = worldNormal;
 
 				return o;
 			}
@@ -101,7 +87,37 @@ Shader "Unlit/GouraudShader"
 			// Implementation of the fragment shader
 			fixed4 frag(vertOut v) : SV_Target
 			{
-				return v.color;
+                // Sample the texture for the "unlit" colour for this pixel
+				float4 unlitColor = tex2D(_MainTex, v.uv);
+
+                // Important: Our interpolated normal might not be of length 1
+				float3 interpNormal = normalize(v.worldNormal);    
+
+				// Calculate ambient RGB intensities
+				float Ka = 1;
+				float3 amb = unlitColor.rgb * UNITY_LIGHTMODEL_AMBIENT.rgb * Ka;
+
+				// Calculate diffuse RBG reflections, we save the results of L.N because we will use it again
+				// (when calculating the reflected ray in our specular component)
+				float fAtt = 1;
+				float Kd = 1;
+				float3 L = normalize(_PointLightPosition - v.worldVertex.xyz);
+				float LdotN = dot(L, v.worldNormal.xyz);
+				float3 dif = fAtt * _PointLightColor.rgb * Kd * unlitColor.rgb * saturate(LdotN);
+				
+				// Calculate specular reflections
+				float Ks = 1;
+				float specN = 5; // Values>>1 give tighter highlights
+				float3 V = normalize(_WorldSpaceCameraPos - v.worldVertex.xyz);
+				float3 R = 2*(LdotN)*v.worldNormal-L;
+				float3 spe = fAtt * _PointLightColor.rgb * Ks * pow(saturate(dot(V, R)), specN);
+
+                // Combine Phong illumination model components
+                float4 finalColor = float4(0.0f, 0.0f, 0.0f, 0.0f);
+				finalColor.rgb = amb.rgb + dif.rgb + spe.rgb;
+				finalColor.a = unlitColor.a;
+
+                return finalColor;
 			}
 			ENDCG
 		}
